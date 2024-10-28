@@ -1,23 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { VegaLite } from 'react-vega';
 import * as d3 from 'd3-dsv';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Loader2, AlertCircle } from 'lucide-react';
 
-const url = process.env.NODE_ENV === 'production' 
-  ? 'https://assignment2-lozb.onrender.com' 
-  : 'http://127.0.0.1:8000/';
+// Update API URL construction to use correct endpoint
+const BASE_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://your-production-url.com' 
+  : 'http://127.0.0.1:8000';
 
 const userImage = 'https://images.pexels.com/photos/614810/pexels-photo-614810.jpeg';
 const systemImage = 'https://img.freepik.com/free-vector/floating-robot_78370-3669.jpg';
 
-function App() {
+export default function DataVizAssistant() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [fileData, setFileData] = useState(null);
-  const [vegaSpec, setVegaSpec] = useState(null);
   const [dragging, setDragging] = useState(false);
-  const [tableVisible, setTableVisible] = useState(false); // State for table visibility
+  const [tableVisible, setTableVisible] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const chatEndRef = useRef(null);
 
-  // Drag and Drop Handlers
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   const handleDragOver = (e) => {
     e.preventDefault();
     setDragging(true);
@@ -31,228 +40,237 @@ function App() {
     e.preventDefault();
     setDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file) {
-      handleFileUpload(file);
-    }
+    if (file) handleFileUpload(file);
   };
 
-  const handleChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      handleFileUpload(file);
-    }
-  };
-
-  // File Upload
   const handleFileUpload = (file) => {
     if (file.type === "text/csv") {
       const reader = new FileReader();
       reader.onload = () => {
-        const parsedData = d3.csvParse(reader.result, d3.autoType);
-        setFileData(parsedData);
+        try {
+          const parsedData = d3.csvParse(reader.result, d3.autoType);
+          if (parsedData && parsedData.length > 0) {
+            setFileData(parsedData);
+            setError(null);
+            setMessages([{
+              sender: 'System',
+              text: `Dataset loaded successfully! Found ${parsedData.length} rows and ${Object.keys(parsedData[0]).length} columns.`,
+              userImg: systemImage
+            }]);
+          } else {
+            throw new Error('No data found in CSV file');
+          }
+        } catch (err) {
+          setError('Failed to parse CSV file. Please check the file format.');
+        }
+      };
+      reader.onerror = () => {
+        setError('Failed to read the file. Please try again.');
       };
       reader.readAsText(file);
     } else {
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: 'System', text: 'Please upload a valid CSV file.', userImg: systemImage }
-      ]);
+      setError('Please upload a valid CSV file.');
     }
   };
 
-  // Check message relevance
-  const checkMessageRelevance = (message, columnsInfo) => {
-    const columnNames = columnsInfo.map(col => col.name.toLowerCase());
-    const keywords = ["plot", "chart", "bar", "line", "visualize", "show", "display"];
-    
-    const messageWords = message.toLowerCase().split(" ");
-    const containsColumn = messageWords.some(word => columnNames.includes(word));
-    const containsKeyword = messageWords.some(word => keywords.includes(word));
-    
-    return containsColumn || containsKeyword;
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) handleFileUpload(file);
   };
 
-  // Send message logic
   const sendMessage = async () => {
-    if (message === "") return;
-
+    if (!message.trim()) return;
+  
     if (!fileData) {
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: 'You', text: message, userImg: userImage },
-        { sender: 'System', text: 'Please upload a dataset before sending a message.', userImg: systemImage }
-      ]);
-      setMessage("");  // Clear the input field
+      setError('Please upload a dataset first.');
       return;
     }
-
-    const columnsInfo = Object.keys(fileData[0]).map((columnName) => ({
-      name: columnName,
-      type: typeof fileData[0][columnName],
-      sample: fileData[0][columnName].toString(),
-    }));
-
-    // Check if the message is relevant
-    const isRelevant = checkMessageRelevance(message, columnsInfo);
-
-    if (!isRelevant) {
-      // If message is unrelated, show an error message
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: 'You', text: message, userImg: userImage },
-        { sender: 'System', text: 'The system could not find relevant information in your request. Please ask a data-related question.', userImg: systemImage }
-      ]);
-      setMessage("");  // Clear the input field
-      return;
-    }
-
-    // Send the relevant message to the system
-    const newMessage = { sender: 'You', text: message, userImg: userImage };
-    setMessages((prevMessages) => [...prevMessages, newMessage]);
-
-    const promptForChart = message;
-
+  
+    setMessages(prev => [...prev, { sender: 'You', text: message, userImg: userImage }]);
+    setLoading(true);
+    setError(null);
+  
     try {
-      const response = await fetch(`${url}query`, {
+      const response = await fetch(`${BASE_URL}/query`, {
         method: 'POST',
-        body: JSON.stringify({ prompt: promptForChart, columns_info: columnsInfo }),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: message,
+          data: fileData
+        })
       });
-
-      const data = await response.json();
-
-      if (data.vega_lite_spec) {
-        const vegaSpecWithData = JSON.parse(data.vega_lite_spec);
-        vegaSpecWithData.data = { values: fileData };
-
-        setMessages((prevMessages) => [
-          ...prevMessages,
-          { sender: 'System', text: data.chart_description, vegaLiteSpec: vegaSpecWithData, userImg: systemImage }  // Include the Vega-Lite spec
-        ]);
-        setVegaSpec(vegaSpecWithData); // Set Vega specification
-      } else {
-        setMessages((prevMessages) => [
-          ...prevMessages,
-          { sender: 'System', text: data.response, userImg: systemImage }
-        ]);
+  
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-    } catch (error) {
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: 'System', text: 'Failed to generate a response.', userImg: systemImage }
-      ]);
+  
+      const result = await response.json();
+      
+      // Create array of messages to add
+      const newMessages = [];
+      
+      // Add chart if present
+      if (result.chart) {
+        newMessages.push({
+          sender: 'System',
+          userImg: systemImage,
+          vegaSpec: {
+            ...result.chart,
+            data: { values: fileData }
+          }
+        });
+      }
+      
+      // Add text response
+      newMessages.push({
+        sender: 'System',
+        text: result.text,
+        userImg: systemImage
+      });
+  
+      setMessages(prev => [...prev, ...newMessages]);
+    } catch (err) {
+      setError(`Error: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setMessage("");
     }
-
-    setMessage("");  // Clear the input field
   };
 
-  const handleMessage = (e) => setMessage(e.target.value);
-  
-  const toggleTable = () => {
-    setTableVisible(!tableVisible);
+  const clearMessages = () => {
+    setMessages([]);
+    setError(null);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
-      <h1 className="text-4xl font-bold mb-6">Data Visualization AI Assistant</h1>
+    <div className="min-h-screen bg-gray-50 p-4">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold text-center mb-6 text-gray-900">
+          Data Visualization Assistant
+        </h1>
 
-      <div className="w-full max-w-4xl bg-white rounded-lg shadow-md p-4">
-        
-        {/* File Upload Area */}
-        <div
-          className={`border-2 border-dashed rounded-lg p-4 text-center ${
-            dragging ? 'border-blue-500' : 'border-gray-300'
-          }`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          <input
-            type="file"
-            accept=".csv"
-            onChange={handleChange}
-            style={{ display: 'none' }}
-            id="file-upload"
-          />
-          <label htmlFor="file-upload" className="cursor-pointer">
-            {dragging ? (
-              <p className="text-blue-500">Release to upload!</p>
-            ) : (
-              <p>Drag and drop a file here, or click to upload</p>
-            )}
-          </label>
-        </div>
-
-        {/* Add margin between file upload and table preview button */}
-        <div className="my-4 flex justify-center">
-          {fileData && (
-            <button className="bg-purple-900 text-white px-4 py-2 rounded-md" onClick={toggleTable}>
-              {tableVisible ? 'Hide Table' : 'Show Table'}
-            </button>
-          )}
-        </div>
-
-        {/* Table Preview */}
-        {tableVisible && fileData && (
-          <div className="overflow-auto max-h-60 mb-4">
-            <table className="min-w-full table-auto border-collapse border border-gray-300">
-              <thead>
-                <tr>
-                  {Object.keys(fileData[0]).map((key) => (
-                    <th className="border border-gray-300 px-4 py-2" key={key}>{key}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {fileData.slice(0, 10).map((row, rowIndex) => (
-                  <tr key={rowIndex}>
-                    {Object.values(row).map((val, colIndex) => (
-                      <td className="border border-gray-300 px-4 py-2" key={colIndex}>{val}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {error && (
+          <div className="text-red-500 mb-4">
+            <AlertCircle className="inline h-4 w-4" />
+            {error}
           </div>
         )}
 
-        {/* Chat Interface */}
-        <div className="flex flex-col space-y-4 overflow-auto h-96 p-2 bg-gray-100 rounded-lg mb-4">
-          {messages.map((msg, index) => (
-            <div key={index} className={`flex ${msg.sender === 'You' ? 'justify-end' : 'justify-start'}`}>
-              <div className="flex items-end space-x-2">
-                <img 
-                  src={msg.userImg} 
-                  alt={`${msg.sender} avatar`} 
-                  className="w-10 h-10 rounded-full object-cover" 
-                />
-                <div className={`bg-purple-900 text-white rounded-lg p-3`}>
-                  <span className="block font-semibold text-sm">{msg.sender}</span>
-                  {msg.vegaLiteSpec && <VegaLite spec={msg.vegaLiteSpec} />}
-                  <p>{msg.text}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <div
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors
+              ${dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileSelect}
+              className="hidden"
+              id="file-input"
+            />
+            <label 
+              htmlFor="file-input"
+              className="cursor-pointer text-blue-600 hover:text-blue-800"
+            >
+              {dragging ? 'Drop your file here!' : 'Drop a CSV file here or click to upload'}
+            </label>
+          </div>
 
-        <div className="flex mt-4">
-          <input 
-            type="text" 
-            placeholder="Type your question here" 
-            value={message} 
-            onChange={handleMessage} 
-            className="input input-bordered w-full px-4 py-2 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-purple-600" 
-          />
-          <button className="bg-purple-900 text-white px-4 py-2 rounded-r-lg" onClick={sendMessage}>
-            Send
-          </button>
+          {fileData && (
+            <div className="mt-4">
+              <button
+                onClick={() => setTableVisible(!tableVisible)}
+                className="w-full bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                {tableVisible ? 'Hide Data Preview' : 'Show Data Preview'}
+              </button>
+
+              {tableVisible && (
+                <div className="mt-4 overflow-auto max-h-60 rounded-lg border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        {Object.keys(fileData[0]).map(key => (
+                          <th key={key} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            {key}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {fileData.slice(0, 5).map((row, i) => (
+                        <tr key={i}>
+                          {Object.values(row).map((val, j) => (
+                            <td key={j} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {String(val)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-6 bg-gray-50 rounded-lg p-4">
+            <div className="h-96 overflow-auto mb-4 space-y-4">
+             {messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.sender === 'You' ? 'justify-end' : 'justify-start'}`}>
+                <div className="flex items-start space-x-2 max-w-2xl">
+                  <img src={msg.userImg} alt={`${msg.sender} avatar`} className="w-8 h-8 rounded-full" />
+                  <div className={`rounded-lg p-3 ${msg.sender === 'You' ? 'bg-blue-600 text-white' : 'bg-white shadow-sm'}`}>
+                    <div className="text-sm font-semibold mb-1">{msg.sender}</div>
+                      {msg.vegaSpec ? (
+                        <VegaLite spec={msg.vegaSpec} className="mt-2" /> // Render Vega-Lite chart if present
+                      ) : (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} className="text-sm">
+                          {msg.text}
+                        </ReactMarkdown>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="flex justify-center">
+                  <Loader2 className="animate-spin text-blue-600" />
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                placeholder="Ask about your data..."
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={!fileData || loading}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!fileData || loading}
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
+              <button
+                onClick={clearMessages}
+                className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-export default App;
