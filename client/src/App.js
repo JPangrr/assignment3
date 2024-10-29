@@ -228,7 +228,7 @@ export default function DataVizAssistant() {
                       </div>
                     )}
                     <ReactMarkdown remarkPlugins={[remarkGfm]} className="text-sm">
-                      {msg.text}
+                      {msg.content}
                     </ReactMarkdown>
                     </div>
                   </div>
