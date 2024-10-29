@@ -7,7 +7,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 
 // Update API URL construction to use correct endpoint
 const BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://assignment3-1-ggpf.onrender.com' 
+  ? 'https://assignment3-1-zl4t.onrender.com' 
   : 'http://127.0.0.1:8000';
 
 const userImage = 'https://images.pexels.com/photos/614810/pexels-photo-614810.jpeg';
