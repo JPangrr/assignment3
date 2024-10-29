@@ -1,16 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { VegaLite } from 'react-vega';
 import * as d3 from 'd3-dsv';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Loader2, AlertCircle } from 'lucide-react';
 
-const url = process.env.NODE_ENV === 'production' 
-  ? 'https://assignment2-lozb.onrender.com' 
-  : 'http://127.0.0.1:8000/';
+// Update API URL construction to use correct endpoint
+const BASE_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://assignment3-1-ggpf.onrender.com' 
+  : 'http://127.0.0.1:8000';
 
 const userImage = 'https://images.pexels.com/photos/614810/pexels-photo-614810.jpeg';
 const systemImage = 'https://img.freepik.com/free-vector/floating-robot_78370-3669.jpg';
 
-function App() {
+export default function DataVizAssistant() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [fileData, setFileData] = useState(null);
@@ -61,6 +64,9 @@ function App() {
           setError('Failed to parse CSV file. Please check the file format.');
         }
       };
+      reader.onerror = () => {
+        setError('Failed to read the file. Please try again.');
+      };
       reader.readAsText(file);
     } else {
       setError('Please upload a valid CSV file.');
@@ -85,7 +91,7 @@ function App() {
     setError(null);
 
     try {
-      const response = await fetch(`${url}query`, {
+      const response = await fetch(`${BASE_URL}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -100,32 +106,37 @@ function App() {
 
       const result = await response.json();
       
-      // Handle visualization if present
+      // Create array of messages to add
+      const newMessages = [];
+      
+      // Add chart if present
       if (result.chart) {
-        const vegaSpec = {
-          ...result.chart,
-          data: { values: fileData }
-        };
-        
-        setMessages(prev => [...prev, {
+        newMessages.push({
           sender: 'System',
-          text: result.text,
           userImg: systemImage,
-          vegaSpec: vegaSpec
-        }]);
-      } else {
-        setMessages(prev => [...prev, {
-          sender: 'System',
-          text: result.text,
-          userImg: systemImage
-        }]);
+          vegaSpec: result.chart
+        });
       }
+      
+      // Add text response
+      newMessages.push({
+        sender: 'System',
+        text: result.text,
+        userImg: systemImage
+      });
+
+      setMessages(prev => [...prev, ...newMessages]);
     } catch (err) {
       setError(`Error: ${err.message}`);
     } finally {
       setLoading(false);
       setMessage("");
     }
+  };
+
+  const clearMessages = () => {
+    setMessages([]);
+    setError(null);
   };
 
   return (
@@ -136,8 +147,8 @@ function App() {
         </h1>
 
         {error && (
-          <div className="text-red-500 mb-4 flex items-center gap-2">
-            <AlertCircle className="h-4 w-4" />
+          <div className="text-red-500 mb-4">
+            <AlertCircle className="inline h-4 w-4" />
             {error}
           </div>
         )}
@@ -175,7 +186,7 @@ function App() {
               </button>
 
               {tableVisible && (
-                <div className="mt-4 overflow-auto max-h-60">
+                <div className="mt-4 overflow-auto max-h-60 rounded-lg border border-gray-200">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
@@ -205,18 +216,20 @@ function App() {
 
           <div className="mt-6 bg-gray-50 rounded-lg p-4">
             <div className="h-96 overflow-auto mb-4 space-y-4">
-              {messages.map((msg, idx) => (
-                <div key={idx} className={`flex ${msg.sender === 'You' ? 'justify-end' : 'justify-start'}`}>
-                  <div className="flex items-start space-x-2 max-w-2xl">
-                    <img src={msg.userImg} alt={`${msg.sender} avatar`} className="w-8 h-8 rounded-full" />
-                    <div className={`rounded-lg p-3 ${msg.sender === 'You' ? 'bg-blue-600 text-white' : 'bg-white shadow-sm'}`}>
-                      <div className="text-sm font-semibold mb-1">{msg.sender}</div>
-                      {msg.vegaSpec && (
-                        <div className="mt-2 bg-white p-2 rounded">
-                          <VegaLite spec={msg.vegaSpec} />
-                        </div>
-                      )}
-                      <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+             {messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.sender === 'You' ? 'justify-end' : 'justify-start'}`}>
+                <div className="flex items-start space-x-2 max-w-2xl">
+                  <img src={msg.userImg} alt={`${msg.sender} avatar`} className="w-8 h-8 rounded-full" />
+                  <div className={`rounded-lg p-3 ${msg.sender === 'You' ? 'bg-blue-600 text-white' : 'bg-white shadow-sm'}`}>
+                    <div className="text-sm font-semibold mb-1">{msg.sender}</div>
+                    {msg.vegaLiteSpec && (
+                      <div className="mt-2">
+                        <VegaLite spec={msg.vegaLiteSpec} data={{ values: fileData }} />
+                      </div>
+                    )}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} className="text-sm">
+                      {msg.text}
+                    </ReactMarkdown>
                     </div>
                   </div>
                 </div>
@@ -246,6 +259,12 @@ function App() {
               >
                 Send
               </button>
+              <button
+                onClick={clearMessages}
+                className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Clear
+              </button>
             </div>
           </div>
         </div>
@@ -253,5 +272,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
