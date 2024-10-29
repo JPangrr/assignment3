@@ -157,7 +157,7 @@ def generate_vega_lite_spec(prompt: str, columns_info: Dict[str, str]) -> QueryR
                 "content": constructed_prompt,
             }
         ],
-        model="gpt-4o-mini",
+        model="gpt-4",
     )
 
     # Try accessing the completion's content correctly
