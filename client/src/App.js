@@ -7,8 +7,8 @@ import { Loader2, AlertCircle } from 'lucide-react';
 
 // Update API URL construction to use correct endpoint
 const BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://assignment3-f8gl.onrender.com' 
-  : 'http://127.0.0.1:8000';
+  ? 'https://assignment3-f8gl.onrender.com'  // Your Render.com URL
+  : 'http://localhost:10000';  // Match the backend port
 
 const userImage = 'https://images.pexels.com/photos/614810/pexels-photo-614810.jpeg';
 const systemImage = 'https://img.freepik.com/free-vector/floating-robot_78370-3669.jpg';

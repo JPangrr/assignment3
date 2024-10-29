@@ -69,7 +69,11 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://jpangrr.github.io",  # Add your GitHub Pages domain
+        "https://assignment3-f8gl.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -452,4 +456,5 @@ def process_tool_calls(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 10000))  # Use PORT from environment or default to 10000
+    uvicorn.run(app, host="0.0.0.0", port=port)
