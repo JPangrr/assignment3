@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from openai import OpenAI
@@ -70,11 +71,11 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://assignment3-f8gl.onrender.com",  # Replace with your frontend domain
-        "http://localhost:3000",  # For local development
+        "https://assignment3-f8gl.onrender.com",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],  # Explicitly list allowed methods
     allow_headers=["*"],
 )
 
@@ -294,9 +295,20 @@ def create_analysis_tool() -> Dict[str, Any]:
         }
     }
 
+@app.head("/")
+async def head_check():
+    """Handle HEAD requests to root endpoint"""
+    return Response(status_code=200)
+
 @app.get("/")
 async def health_check():
-    return {"status": "healthy", "message": "API is running"}
+    """Handle GET requests to root endpoint"""
+    return PlainTextResponse("API is running", status_code=200)
+
+@app.options("/")
+async def options_check():
+    """Handle OPTIONS requests to root endpoint"""
+    return Response(status_code=200)
 
 @app.post("/query", response_model=AnalysisResponse)
 async def process_query(request: QueryRequest) -> AnalysisResponse:
