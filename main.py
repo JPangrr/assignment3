@@ -338,7 +338,7 @@ async def process_query(request: QueryRequest) -> AnalysisResponse:
         analysis_results = []
         
         # React loop - continue until assistant provides final response without tool calls
-        max_iterations = 5
+        max_iterations = 10
         iteration = 0
         
         while iteration < max_iterations:
