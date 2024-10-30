@@ -8,7 +8,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 // Update API URL construction to use correct endpoint
 const BASE_URL = process.env.NODE_ENV === 'production' 
   ? 'https://assignment3-f8gl.onrender.com'  // Update this to your actual Render.com API URL
-  : 'http://localhost:10000';
+  : 'http://127.0.0.1:8000';
 
 const userImage = 'https://images.pexels.com/photos/614810/pexels-photo-614810.jpeg';
 const systemImage = 'https://img.freepik.com/free-vector/floating-robot_78370-3669.jpg';
@@ -50,11 +50,20 @@ export default function DataVizAssistant() {
         try {
           const parsedData = d3.csvParse(reader.result, d3.autoType);
           if (parsedData && parsedData.length > 0) {
-            setFileData(parsedData);
+            // Convert any numeric strings to numbers
+            const cleanedData = parsedData.map(row => {
+              const cleanRow = {};
+              Object.entries(row).forEach(([key, value]) => {
+                const num = Number(value);
+                cleanRow[key] = !isNaN(num) ? num : value;
+              });
+              return cleanRow;
+            });
+            setFileData(cleanedData);
             setError(null);
             setMessages([{
               sender: 'System',
-              text: `Dataset loaded successfully! Found ${parsedData.length} rows and ${Object.keys(parsedData[0]).length} columns.`,
+              text: `Dataset loaded successfully! Found ${cleanedData.length} rows and ${Object.keys(cleanedData[0]).length} columns.`,
               userImg: systemImage
             }]);
           } else {
@@ -111,10 +120,17 @@ export default function DataVizAssistant() {
       
       // Add chart if present
       if (result.chart) {
+        const vegaSpec = {
+          ...result.chart,
+          data: { values: fileData },
+          width: 500,  // Set explicit width
+          height: 300  // Set explicit height
+        };
+        
         newMessages.push({
           sender: 'System',
           userImg: systemImage,
-          vegaSpec: result.chart
+          vegaSpec: vegaSpec
         });
       }
       
@@ -222,13 +238,13 @@ export default function DataVizAssistant() {
                   <img src={msg.userImg} alt={`${msg.sender} avatar`} className="w-8 h-8 rounded-full" />
                   <div className={`rounded-lg p-3 ${msg.sender === 'You' ? 'bg-blue-600 text-white' : 'bg-white shadow-sm'}`}>
                     <div className="text-sm font-semibold mb-1">{msg.sender}</div>
-                    {msg.vegaLiteSpec && (
-                      <div className="mt-2">
-                        <VegaLite spec={msg.vegaLiteSpec} data={{ values: fileData }} />
+                    {msg.vegaSpec && (
+                      <div className="mt-2 bg-white p-2 rounded">
+                        <VegaLite spec={msg.vegaSpec} />
                       </div>
                     )}
                     <ReactMarkdown remarkPlugins={[remarkGfm]} className="text-sm">
-                      {msg.content}
+                      {msg.text}
                     </ReactMarkdown>
                     </div>
                   </div>

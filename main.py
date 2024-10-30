@@ -1,16 +1,14 @@
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from openai import OpenAI
 import pandas as pd
 import sys
 from io import StringIO
-import re
 import json
 import os
 import logging
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, NamedTuple
 from dotenv import load_dotenv
 
 # Configure logging
@@ -70,17 +68,11 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://jpangrr.github.io",  # Add your GitHub Pages domain
-        "https://assignment3-f8gl.onrender.com",
-        "http://localhost:3000",
-        "http://localhost:10000",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
-    max_age=3600,
 )
 
 # Initialize OpenAI client
@@ -102,6 +94,11 @@ class AnalysisResponse(BaseModel):
     text: str = Field("", description="Analysis results or explanation")
     chart: Optional[Dict[str, Any]] = Field(None, description="Vega-Lite visualization spec")
     summary: Optional[List[Dict[str, Any]]] = Field(None, description="Summary table")
+
+class ColumnInfo(NamedTuple):
+    name: str
+    type: str
+    sample: Any
 
 def validate_data(data: List[Dict[str, Any]]) -> None:
     """Validate the input data structure and log column information."""
@@ -131,9 +128,15 @@ def construct_vega_lite_prompt(user_question, columns_info):
 
     Please generate a valid Vega-Lite JSON specification for the following question: "{user_question}"
     
-    Remember to choose the most appropriate chart type based on the data and question. Also, handle any necessary data transformations (such as filtering, aggregation, or binning) that the chart might require.
+    Remember to:
+    1. Choose the most appropriate chart type based on the data and question
+    2. Do NOT include the "data" field or "values" - these will be added separately
+    3. Handle any necessary data transformations (filtering, aggregation, binning)
+    4. Ensure all referenced columns exist in the dataset
+    5. Use proper encoding channels (x, y, color, etc.)
+    6. Set appropriate scales and axes based on data types
 
-    Provide only the Vega-Lite JSON spec in your response.
+    Provide only the Vega-Lite JSON spec in your response, with no additional text or explanation.
     """
     return prompt
 
@@ -150,11 +153,11 @@ def construct_chart_description_prompt(vega_lite_spec):
     
     return prompt
 
-def generate_vega_lite_spec(prompt: str, columns_info: Dict[str, str]) -> QueryResponse:
+def generate_vega_lite_spec(prompt: str, columns_info: List[ColumnInfo]) -> QueryResponse:
     constructed_prompt = construct_vega_lite_prompt(prompt, columns_info)
 
     # Step 2: Call OpenAI API to generate Vega-Lite specification
-    chat_completion = client.ChatCompletion.create(
+    chat_completion = client.chat.completions.create(
         messages=[
             {
                 "role": "system",
@@ -170,15 +173,29 @@ def generate_vega_lite_spec(prompt: str, columns_info: Dict[str, str]) -> QueryR
 
     # Try accessing the completion's content correctly
     try:
-        vega_lite_spec = chat_completion.choices[0].message['content']
+        vega_lite_spec = chat_completion.choices[0].message.content.strip()
         logger.info(f"Generated Vega-Lite Spec: {vega_lite_spec}")  # Log the Vega-Lite spec
+        
+        # Validate JSON
+        try:
+            json.loads(vega_lite_spec)
+        except json.JSONDecodeError:
+            # If not valid JSON, try to extract JSON from markdown code block
+            if "```json" in vega_lite_spec:
+                vega_lite_spec = vega_lite_spec.split("```json")[1].split("```")[0].strip()
+            elif "```" in vega_lite_spec:
+                vega_lite_spec = vega_lite_spec.split("```")[1].strip()
+                
+            # Validate extracted JSON
+            json.loads(vega_lite_spec)
+            
     except KeyError as e:
         raise HTTPException(status_code=500, detail=f"KeyError: {str(e)} in response: {chat_completion}")
 
     # Step 4: Chain another prompt for chart description
     description_prompt = construct_chart_description_prompt(vega_lite_spec)
 
-    description_completion = client.ChatCompletion.create(
+    description_completion = client.chat.completions.create(
         messages=[
             {
                 "role": "system",
@@ -194,7 +211,7 @@ def generate_vega_lite_spec(prompt: str, columns_info: Dict[str, str]) -> QueryR
 
     # Try accessing the description content correctly
     try:
-        chart_description = description_completion.choices[0].message['content']
+        chart_description = description_completion.choices[0].message.content
         logger.info(f"Generated Chart Description: {chart_description}")  # Log the chart description
     except KeyError as e:
         raise HTTPException(status_code=500, detail=f"KeyError: {str(e)} in response: {description_completion}")
@@ -299,21 +316,6 @@ def create_analysis_tool() -> Dict[str, Any]:
         }
     }
 
-@app.head("/")
-async def head_check():
-    """Handle HEAD requests to root endpoint"""
-    return Response(status_code=200)
-
-@app.get("/")
-async def health_check():
-    """Handle GET requests to root endpoint"""
-    return PlainTextResponse("API is running", status_code=200)
-
-@app.options("/")
-async def options_check():
-    """Handle OPTIONS requests to root endpoint"""
-    return Response(status_code=200)
-
 @app.post("/query", response_model=AnalysisResponse)
 async def process_query(request: QueryRequest) -> AnalysisResponse:
     """Process a data analysis query with enhanced tool calling and response handling."""
@@ -323,65 +325,97 @@ async def process_query(request: QueryRequest) -> AnalysisResponse:
         # Validate input data and log column information
         validate_data(request.data)
         
-        # Initialize response
+        # Initialize response and message history
         final_response = AnalysisResponse()
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": request.prompt}
+        ]
         
-        try:
-            # Modify the initial API call to explicitly allow multiple tool calls
-            initial_response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT + "\nYou can and should use multiple tools when appropriate. If a user asks for both visualization and analysis, use both the create_chart and analyze_data tools."},
-                    {"role": "user", "content": request.prompt}
-                ],
-                tools=[create_chart_tool(), create_analysis_tool()],
-                tool_choice="auto",
-                timeout=30
-            )
-            
-            # Log initial response for debugging
-            logger.info(f"Initial response: {initial_response}")
-            
-            # If no tool calls, return direct response
-            if not initial_response.choices[0].message.tool_calls:
-                final_response.text = initial_response.choices[0].message.content
-                return final_response
-            
-            # Process tool calls and get final response
-            response_text, chart_spec, summary, analysis_results = process_tool_calls(
-                client=client,
-                initial_response=initial_response,
-                request_data=request.data,
-                system_prompt=SYSTEM_PROMPT,
-                user_prompt=request.prompt
-            )
-            
-            # Combine all results into the final response
-            final_text_parts = []
-            
-            # Add analysis results if present
-            if analysis_results:
-                final_text_parts.extend(analysis_results)
-            
-            # Add response text
-            if response_text:
-                final_text_parts.append(response_text)
-            
-            final_response.text = "\n\n".join(final_text_parts)
-            if chart_spec:
-                final_response.chart = chart_spec
-            if summary:
-                final_response.summary = summary
-            
-            return final_response
-            
-        except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing request with OpenAI API: {str(e)}"
-            )
+        # Initialize tool results storage
+        chart_spec = None
+        summary = None
+        analysis_results = []
         
+        # React loop - continue until assistant provides final response without tool calls
+        max_iterations = 5
+        iteration = 0
+        
+        while iteration < max_iterations:
+            try:
+                # Get next action from assistant
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=messages,
+                    tools=[create_chart_tool(), create_analysis_tool()],
+                    tool_choice="auto"
+                )
+                
+                assistant_message = response.choices[0].message
+                
+                # If no tool calls, we have our final response
+                if not assistant_message.tool_calls:
+                    final_response.text = assistant_message.content
+                    if chart_spec:
+                        final_response.chart = chart_spec
+                    if summary:
+                        final_response.summary = summary
+                    break
+                
+                # Process tool calls
+                messages.append({
+                    "role": "assistant",
+                    "content": assistant_message.content,
+                    "tool_calls": assistant_message.tool_calls
+                })
+                
+                for tool_call in assistant_message.tool_calls:
+                    func_name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+                    
+                    # Execute appropriate tool
+                    if func_name == "create_chart":
+                        df = pd.DataFrame(request.data)
+                        columns_info = [
+                            ColumnInfo(
+                                name=col,
+                                type=str(dtype),
+                                sample=str(df[col].iloc[0]) if len(df) > 0 else None
+                            )
+                            for col, dtype in df.dtypes.items()
+                        ]
+                        query_response = generate_vega_lite_spec(request.prompt, columns_info)
+                        chart_spec = json.loads(query_response.vega_lite_spec)
+                        # Add the data to the chart specification
+                        chart_spec["data"] = {"values": request.data}
+                        tool_result = query_response.chart_description
+                    
+                    elif func_name == "analyze_data":
+                        tool_result = execute_pandas_code(args["code"], request.data)
+                        analysis_results.append(tool_result)
+                    
+                    # Add tool result to message history
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": str(tool_result)
+                    })
+                
+                iteration += 1
+                
+            except Exception as e:
+                logger.error(f"Error in react loop iteration {iteration}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error in analysis iteration {iteration}: {str(e)}"
+                )
+        
+        if iteration >= max_iterations:
+            logger.warning("Reached maximum iterations in react loop")
+            final_response.text = "Analysis completed but reached maximum iterations. Results may be incomplete."
+        
+        return final_response
+            
     except ValueError as e:
         logger.error(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -391,87 +425,6 @@ async def process_query(request: QueryRequest) -> AnalysisResponse:
             status_code=500,
             detail=f"An unexpected error occurred: {str(e)}"
         )
-
-def process_tool_calls(
-    client: OpenAI,
-    initial_response,
-    request_data: List[Dict[str, Any]],
-    system_prompt: str,
-    user_prompt: str
-) -> Tuple[str, Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]], List[str]]:
-    """
-    Process tool calls and generate final response with optional visualization.
-    """
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-    
-    chart_spec = None
-    summary = None
-    analysis_results = []
-    tool_results = []
-    
-    # Process all tool calls
-    for tool_call in initial_response.choices[0].message.tool_calls:
-        func_name = tool_call.function.name
-        args = json.loads(tool_call.function.arguments)
-        
-        logger.info(f"Processing tool call: {func_name} with arguments: {args}")
-        
-        tool_result = None
-        
-        # Execute appropriate tool and collect output
-        if func_name == "create_chart":
-            df = pd.DataFrame(request_data)
-            if args["x_column"] not in df.columns or args["y_column"] not in df.columns:
-                tool_result = f"Error: One or more columns not found. Available columns: {df.columns.tolist()}"
-            else:
-                columns_info = {col: str(dtype) for col, dtype in df.dtypes.items()}
-                query_response = generate_vega_lite_spec(user_prompt, columns_info)
-                chart_spec = json.loads(query_response.vega_lite_spec)
-                tool_result = {
-                    "chart": chart_spec,
-                    "description": query_response.chart_description
-                }
-        
-        elif func_name == "analyze_data":
-            analysis_result = execute_pandas_code(args["code"], request_data)
-            analysis_results.append(analysis_result)
-            tool_result = analysis_result
-        
-        # Store the tool result and add to messages
-        tool_results.append({
-            "tool_call_id": tool_call.id,
-            "result": tool_result
-        })
-        
-        messages.extend([
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [tool_call]
-            },
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": str(tool_result)
-            }
-        ])
-    
-    # Get final response incorporating all results
-    final_response = client.chat.completions.create(
-        model="gpt-4",
-        messages=messages + [
-            {
-                "role": "user",
-                "content": "Based on all the analysis and visualizations above, provide a clear, "
-                          "conversational summary of the insights for the user."
-            }
-        ]
-    )
-    
-    return final_response.choices[0].message.content, chart_spec, summary, analysis_results
 
 if __name__ == "__main__":
     import uvicorn
