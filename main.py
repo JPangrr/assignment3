@@ -71,12 +71,16 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://jpangrr.github.io",  # Add your GitHub Pages domain
         "https://assignment3-f8gl.onrender.com",
         "http://localhost:3000",
+        "http://localhost:10000",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],  # Explicitly list allowed methods
+    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # Initialize OpenAI client
