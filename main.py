@@ -70,9 +70,8 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
-        "https://jpangrr.github.io",  # Add your GitHub Pages domain
-        "https://assignment3-f8gl.onrender.com"
+        "https://assignment3-f8gl.onrender.com",  # Replace with your frontend domain
+        "http://localhost:3000",  # For local development
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -295,6 +294,10 @@ def create_analysis_tool() -> Dict[str, Any]:
         }
     }
 
+@app.get("/")
+async def health_check():
+    return {"status": "healthy", "message": "API is running"}
+
 @app.post("/query", response_model=AnalysisResponse)
 async def process_query(request: QueryRequest) -> AnalysisResponse:
     """Process a data analysis query with enhanced tool calling and response handling."""
@@ -456,4 +459,5 @@ def process_tool_calls(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
