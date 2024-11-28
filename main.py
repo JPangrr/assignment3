@@ -61,6 +61,7 @@ WHEN TO USE BOTH TOOLS:
 
 If the user requests both a chart and a summary table, use both the create_chart and create_analysis tools.
 Example: "Show a breakdown of cars by their origin, as a bar chart and a summary table."
+
 """
 
 app = FastAPI()
@@ -168,7 +169,7 @@ def generate_vega_lite_spec(prompt: str, columns_info: List[ColumnInfo]) -> Quer
                 "content": constructed_prompt,
             }
         ],
-        model="gpt-4",
+        model="gpt-3.5-turbo",
     )
 
     # Try accessing the completion's content correctly
@@ -206,7 +207,7 @@ def generate_vega_lite_spec(prompt: str, columns_info: List[ColumnInfo]) -> Quer
                 "content": description_prompt,
             }
         ],
-        model="gpt-4",
+        model="gpt-3.5-turbo",
     )
 
     # Try accessing the description content correctly
@@ -345,7 +346,7 @@ async def process_query(request: QueryRequest) -> AnalysisResponse:
             try:
                 # Get next action from assistant
                 response = client.chat.completions.create(
-                    model="gpt-4",
+                    model="gpt-3.5-turbo",
                     messages=messages,
                     tools=[create_chart_tool(), create_analysis_tool()],
                     tool_choice="auto"
